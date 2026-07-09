@@ -1,0 +1,19 @@
+# 本地敏感文件（install.sh 会生成，绝不应进仓库）
+.env
+*.env
+
+# config.toml 备份（含本地密码明文）
+*.bak
+*.bak.*
+
+# ccx 运行产物（同事 clone 后本地生成）
+ccx
+ccx.tmp
+ccx.sha256
+ccx.log
+ccx-darwin-*
+
+# 系统
+.DS_Store
+__MACOSX/
+*.swp
