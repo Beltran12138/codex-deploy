@@ -36,15 +36,15 @@ ARCH="$(uname -m)"
 case "$ARCH" in
   arm64)  CCX_ARCH=arm64 ;;
   x86_64) CCX_ARCH=amd64 ;;
-  *) die "不支持的芯片：$ARCH（仅支持 Apple Silicon / Intel Mac）" ;;
+  *) die "不支持的芯片：${ARCH}（仅支持 Apple Silicon / Intel Mac）" ;;
 esac
 ok "芯片 $ARCH → ccx-darwin-$CCX_ARCH"
 
 # ---- 1. 下载 ccx + sha256 校验 + 去隔离 ----
-echo "【1/7】下载 ccx $CCX_VER（含校验）..."
+echo "【1/7】下载 ccx ${CCX_VER}（含校验）..."
 mkdir -p "$CCX_DIR"
-BIN_URL="https://github.com/BenedictKing/ccx/releases/download/$CCX_VER/ccx-darwin-$CCX_ARCH"
-SHA_URL="https://github.com/BenedictKing/ccx/releases/download/$CCX_VER/ccx-darwin-$CCX_ARCH.sha256"
+BIN_URL="https://github.com/BenedictKing/ccx/releases/download/${CCX_VER}/ccx-darwin-${CCX_ARCH}"
+SHA_URL="https://github.com/BenedictKing/ccx/releases/download/${CCX_VER}/ccx-darwin-${CCX_ARCH}.sha256"
 curl -fsSL "$BIN_URL" -o "$CCX_DIR/ccx.tmp" || die "下载失败，检查能否打开：$BIN_URL"
 curl -fsSL "$SHA_URL" -o "$CCX_DIR/ccx.sha256" || die "校验文件下载失败"
 EXP="$(awk '{print $1}' "$CCX_DIR/ccx.sha256")"
@@ -88,7 +88,7 @@ name = "CCX local gateway"
 base_url = "http://localhost:$CCX_PORT/v1"
 env_key = "CCX_ACCESS_KEY"
 EOF
-ok "Codex 配置写入（模型 $MODEL）"
+ok "Codex 配置写入（模型 ${MODEL}）"
 
 # ---- 4. 注入 CCX_ACCESS_KEY（GUI App 可读 + 开机持久）----
 echo "【4/7】注入本地密码到系统环境（让 Codex App 读到）..."
@@ -136,7 +136,7 @@ for i in $(seq 1 15); do
   if curl -fsS "http://localhost:$CCX_PORT/health" >/dev/null 2>&1; then READY=1; break; fi
   sleep 1
 done
-[ "$READY" = 1 ] && ok "ccx 就绪（http://localhost:$CCX_PORT）" || warn "ccx 15s 未响应，查日志：$CCX_LOG"
+[ "$READY" = 1 ] && ok "ccx 就绪（http://localhost:${CCX_PORT}）" || warn "ccx 15s 未响应，查日志：$CCX_LOG"
 
 # ---- 7. 唯一手动步：网页配 DeepSeek 渠道 ----
 echo "【7/7】最后一步（手动，~30 秒）：在 ccx 网页接入 DeepSeek"
