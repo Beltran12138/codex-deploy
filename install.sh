@@ -143,17 +143,21 @@ echo "【7/7】最后一步（手动，~30 秒）：在 ccx 网页接入 DeepSee
 cat <<EOF
 
 ${G}========================================================${N}
- 1. 浏览器打开： http://localhost:$CCX_PORT
+ 最后一步（手动填 key + 跑一个脚本，约 1 分钟）：
+ 1. 浏览器打开： http://localhost:${CCX_PORT}
  2. 若要 access key，填你刚设的本地密码
- 3. 点「添加渠道 / Add Channel」，按下面填：
-      服务类型 : DeepSeek（或 OpenAI Chat 兼容）
+ 3. 点「添加渠道 / Add Channel」，只需填两样：
       上游地址 : https://api.deepseek.com
       API Key  : 你的 DeepSeek key（sk-...）
-      模型映射 : 映射到 $MODEL
+    （服务类型先随便选，下一步脚本会自动改对）
     保存。
- 4. 打开 Codex App（${Y}不要登录 OpenAI 账号${N}），
+ 4. 回终端，跑：
+      bash fix-channel.sh
+    自动修正三关（服务类型/模型映射/角色映射），防 Codex 报错，
+    并重启 ccx + 自测。看到 ${G}✅${N} 即通过。
+ 5. 打开 Codex App（${Y}不要登录 OpenAI 账号${N}），
     发一句「用 Python 写个加法函数」测试。
 ${G}========================================================${N}
 
-完成。以后开机自动可用。日志：$CCX_LOG
+完成。以后开机自动可用。日志：${CCX_LOG}
 EOF
