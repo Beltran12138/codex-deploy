@@ -48,16 +48,23 @@ print(a[0].get('$1','?'))
 "
 }
 
-# ---- 1. 取首个渠道 id ----
+# ---- 1. 取首个渠道 index（ccx 用数组 index 标识渠道，对象无 id 字段；2026-07-09 Qoder 实证）----
 echo "【1/5】读取 Responses 入口渠道..."
-CID="$(getfield id)"
+CID="$(curl -s "${BASE}/api/responses/channels" -H "Authorization: Bearer ${KEY}" | python3 -c "
+import sys,json
+try: d=json.load(sys.stdin)
+except: print('PARSE_ERR'); sys.exit(0)
+a = d if isinstance(d,list) else (d.get('channels') or d.get('data') or [])
+if not a: print('NO_CHANNEL'); sys.exit(0)
+print(a[0].get('index', 0))
+")"
 case "${CID}" in
   PARSE_ERR) die "ccx 渠道列表非合法 JSON。手动检查（输出可能含 key，勿外传）：
     curl -s ${BASE}/api/responses/channels -H \"Authorization: Bearer \$KEY\" | python3 -m json.tool" ;;
   NO_CHANNEL) die "Responses 入口下还没有渠道。先在 ${BASE} 网页加一个：
     上游地址 https://api.deepseek.com + 你的 DeepSeek key，保存后再跑本脚本" ;;
 esac
-info "首个渠道 id=${CID}"
+info "首个渠道 index=${CID}"
 
 # ---- 2. PUT 三关字段（serviceType + modelMapping + normalize）----
 echo "【2/5】PUT 修正（serviceType / modelMapping / normalize）..."
