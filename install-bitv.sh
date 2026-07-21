@@ -10,7 +10,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROXY_DIR="$HOME/chat-path-rewrite-proxy"
-PROXY_REPO="https://github.com/Beltran12138/chat-path-rewrite-proxy"
+PROXY_RAW="https://raw.githubusercontent.com/Beltran12138/chat-path-rewrite-proxy/main"
+SELF_RAW="https://raw.githubusercontent.com/Beltran12138/codex-deploy/main"
 PROXY_PORT=8423
 
 G='\033[32m'; Y='\033[33m'; R='\033[31m'; N='\033[0m'
@@ -27,14 +28,25 @@ command -v curl >/dev/null || die "缺 curl"
 command -v git  >/dev/null || die "缺 git"
 [ -d "/Applications/Codex.app" ] || warn "未检测到 /Applications/Codex.app —— 先在飞连载 Codex App 并打开一次"
 
+# ---- 自举：本脚本可能是单独 curl 下来的（公司网封 github，不能 git clone 整仓）----
+# 缺的兄弟脚本用 raw 补齐（raw.githubusercontent 未被封）
+for f in install.sh fix-channel-bitv.sh; do
+  [ -f "$SCRIPT_DIR/$f" ] || { curl -fsSL "$SELF_RAW/$f" -o "$SCRIPT_DIR/$f" && info "已拉取 $f" || die "拉取 $f 失败（raw 连通？）"; }
+done
+
 # ---- 1. 拉 proxy（BitV 必需，DeepSeek 不需要）----
 echo "【1/3】确保 proxy 在跑（:${PROXY_PORT}）..."
 if curl -fsS -m 3 "http://localhost:${PROXY_PORT}/v1/models" >/dev/null 2>&1; then
   ok "proxy 已在线（跳过）"
 else
   warn "proxy 未跑，开始装（会让你粘 BitV key）..."
-  [ -d "$PROXY_DIR" ] || git clone "$PROXY_REPO" "$PROXY_DIR" >/dev/null 2>&1 \
-    || die "clone proxy 失败（查 GitHub 连通）"
+  if [ ! -f "$PROXY_DIR/install-proxy.sh" ]; then
+    mkdir -p "$PROXY_DIR"
+    for f in install-proxy.sh proxy.js package.json; do
+      curl -fsSL "$PROXY_RAW/$f" -o "$PROXY_DIR/$f" || die "拉取 proxy/$f 失败（raw 连通？）"
+    done
+    info "proxy 文件已就位（raw）"
+  fi
   bash "$PROXY_DIR/install-proxy.sh" || die "proxy 安装失败"
   ok "proxy 已装并自启"
 fi

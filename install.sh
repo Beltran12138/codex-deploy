@@ -40,20 +40,39 @@ case "$ARCH" in
 esac
 ok "芯片 $ARCH → ccx-darwin-$CCX_ARCH"
 
-# ---- 1. 下载 ccx + sha256 校验 + 去隔离 ----
-echo "【1/7】下载 ccx ${CCX_VER}（含校验）..."
+# ---- 1. 就位 ccx 二进制 + sha256 校验 + 去隔离 ----
+# 公司网出口层封 github.com（命令行连不上），ccx 走 github releases 直连会失败。
+# 策略：先试直连（短超时）；连不上 → 找本地已下好的二进制（浏览器走飞连隧道可下，放 ~/Downloads）。
+# sha256 硬编码在此（不依赖 github），两条路都校验，防损坏/篡改。
+echo "【1/7】就位 ccx ${CCX_VER}（含校验）..."
 mkdir -p "$CCX_DIR"
+HERE="$(cd "$(dirname "$0")" && pwd)"
 BIN_URL="https://github.com/BenedictKing/ccx/releases/download/${CCX_VER}/ccx-darwin-${CCX_ARCH}"
-SHA_URL="https://github.com/BenedictKing/ccx/releases/download/${CCX_VER}/ccx-darwin-${CCX_ARCH}.sha256"
-curl -fsSL "$BIN_URL" -o "$CCX_DIR/ccx.tmp" || die "下载失败，检查能否打开：$BIN_URL"
-curl -fsSL "$SHA_URL" -o "$CCX_DIR/ccx.sha256" || die "校验文件下载失败"
-EXP="$(awk '{print $1}' "$CCX_DIR/ccx.sha256")"
+case "$CCX_ARCH" in
+  arm64) EXP="7751e70ef45e928a41e6c6eb23b8d9c522d68a92a26bf1f76ebde2a6c85e4a26" ;;
+  amd64) EXP="4172b022fd00a816288ee8bc33c2a79b091f2c2711057b19001d1477bb0e97a5" ;;
+  *) die "无此架构的 sha256：$CCX_ARCH" ;;
+esac
+if curl -fsSL -m 12 "$BIN_URL" -o "$CCX_DIR/ccx.tmp" 2>/dev/null; then
+  info "已从 github 直连下载"
+else
+  warn "github 连不上（公司网常见）—— 改用本地已下好的二进制"
+  SRC=""
+  for CAND in "$HOME/Downloads/ccx-darwin-${CCX_ARCH}" "$HERE/ccx-darwin-${CCX_ARCH}"; do
+    [ -f "$CAND" ] && { SRC="$CAND"; break; }
+  done
+  [ -n "$SRC" ] || die "找不到 ccx 二进制。公司网封 github 命令行下不了 —— 请用${Y}浏览器${N}下载后放到 ~/Downloads 再重跑本脚本：
+    ${BIN_URL}
+  （浏览器走飞连隧道可下；保持文件名 ccx-darwin-${CCX_ARCH} 不要改）"
+  info "使用本地二进制：$SRC"
+  cp "$SRC" "$CCX_DIR/ccx.tmp"
+fi
 ACT="$(shasum -a 256 "$CCX_DIR/ccx.tmp" | awk '{print $1}')"
-[ "$EXP" = "$ACT" ] || die "sha256 校验失败！文件可能损坏/被篡改，已中止"
+[ "$EXP" = "$ACT" ] || die "sha256 校验失败！期望 $EXP 实得 $ACT（文件损坏/版本不符），已中止"
 mv "$CCX_DIR/ccx.tmp" "$CCX_DIR/ccx"
 chmod +x "$CCX_DIR/ccx"
 xattr -d com.apple.quarantine "$CCX_DIR/ccx" 2>/dev/null || true
-ok "ccx 下载 + 校验通过"
+ok "ccx 就位 + sha256 校验通过"
 
 # ---- 2. 设本地密码 + 写 .env ----
 echo "【2/7】设置 ccx 本地密码（ccx 的本地钥匙，${Y}不是${N} DeepSeek key）"
