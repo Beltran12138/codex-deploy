@@ -31,7 +31,8 @@ command -v git  >/dev/null || die "缺 git"
 # ---- 自举：本脚本可能是单独 curl 下来的（公司网封 github，不能 git clone 整仓）----
 # 缺的兄弟脚本用 raw 补齐（raw.githubusercontent 未被封）
 for f in install.sh fix-channel-bitv.sh; do
-  curl -fsSL "$SELF_RAW/$f" -o "$SCRIPT_DIR/$f" || die "拉取 $f 失败（raw 连通？）"
+  # 用 > 重定向而非 -o：curl -o 在某些 Mac 目录覆盖已存在文件会报 (56) Failure writing output（实证 2026-07-22）
+  curl -fsSL "$SELF_RAW/$f" > "$SCRIPT_DIR/$f" || die "拉取 $f 失败（raw 连通？）"
 done
 info "兄弟脚本已就位（raw 最新版）"
 
@@ -44,7 +45,7 @@ else
   # 每次强制重拉覆盖（防复用昨天残留的旧/损坏文件——曾致 install-proxy.sh 跑错版本）
   mkdir -p "$PROXY_DIR"
   for f in install-proxy.sh proxy.js package.json; do
-    curl -fsSL "$PROXY_RAW/$f" -o "$PROXY_DIR/$f" || die "拉取 proxy/$f 失败（raw 连通？）"
+    curl -fsSL "$PROXY_RAW/$f" > "$PROXY_DIR/$f" || die "拉取 proxy/$f 失败（raw 连通？）"
   done
   info "proxy 文件已就位（raw 最新版，已覆盖旧文件）"
   bash "$PROXY_DIR/install-proxy.sh" || die "proxy 安装失败"
