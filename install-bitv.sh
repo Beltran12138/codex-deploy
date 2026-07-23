@@ -20,6 +20,23 @@ info(){ printf "  %s\n" "$1"; }
 warn(){ printf "${Y}!${N} %s\n" "$1"; }
 die(){ printf "${R}✗ %s${N}\n" "$1" >&2; exit 1; }
 
+# 健壮拉取：重试 + 完整性校验（防 raw 间歇性半截下载→跑损坏脚本，实证 2026-07-23）
+# mode=sentinel 校验文件含 __FETCH_OK__ 末行；mode=json 校验非空且尾部有 }
+fetch(){
+  local url="$1" dest="$2" mode="${3:-sentinel}" a
+  for a in 1 2 3 4 5; do
+    if curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 "$url" > "$dest.part" 2>/dev/null; then
+      if [ "$mode" = json ]; then
+        [ -s "$dest.part" ] && tail -c 5 "$dest.part" | grep -q '}' && { mv "$dest.part" "$dest"; return 0; }
+      else
+        grep -q '__FETCH_OK__' "$dest.part" && { mv "$dest.part" "$dest"; return 0; }
+      fi
+    fi
+    warn "拉取 $(basename "$dest") 第 $a 次不完整/超时，重试..."; sleep 2
+  done
+  rm -f "$dest.part"; die "拉取 $url 失败（重试 5 次仍不完整——raw 间歇性差，稍后重跑本命令）"
+}
+
 echo "=========================================="
 echo "  Codex + BitV 一键安装"
 echo "=========================================="
@@ -31,10 +48,9 @@ command -v git  >/dev/null || die "缺 git"
 # ---- 自举：本脚本可能是单独 curl 下来的（公司网封 github，不能 git clone 整仓）----
 # 缺的兄弟脚本用 raw 补齐（raw.githubusercontent 未被封）
 for f in install.sh fix-channel-bitv.sh; do
-  # 用 > 重定向而非 -o：curl -o 在某些 Mac 目录覆盖已存在文件会报 (56) Failure writing output（实证 2026-07-22）
-  curl -fsSL "$SELF_RAW/$f" > "$SCRIPT_DIR/$f" || die "拉取 $f 失败（raw 连通？）"
+  fetch "$SELF_RAW/$f" "$SCRIPT_DIR/$f" sentinel
 done
-info "兄弟脚本已就位（raw 最新版）"
+info "兄弟脚本已就位（raw 最新版，完整性已校验）"
 
 # ---- 1. 拉 proxy（BitV 必需，DeepSeek 不需要）----
 echo "【1/3】确保 proxy 在跑（:${PROXY_PORT}）..."
@@ -44,10 +60,10 @@ else
   warn "proxy 未跑，开始装（会让你粘 BitV key）..."
   # 每次强制重拉覆盖（防复用昨天残留的旧/损坏文件——曾致 install-proxy.sh 跑错版本）
   mkdir -p "$PROXY_DIR"
-  for f in install-proxy.sh proxy.js package.json; do
-    curl -fsSL "$PROXY_RAW/$f" > "$PROXY_DIR/$f" || die "拉取 proxy/$f 失败（raw 连通？）"
-  done
-  info "proxy 文件已就位（raw 最新版，已覆盖旧文件）"
+  fetch "$PROXY_RAW/install-proxy.sh" "$PROXY_DIR/install-proxy.sh" sentinel
+  fetch "$PROXY_RAW/proxy.js"         "$PROXY_DIR/proxy.js"         sentinel
+  fetch "$PROXY_RAW/package.json"     "$PROXY_DIR/package.json"     json
+  info "proxy 文件已就位（raw 最新版，完整性已校验）"
   bash "$PROXY_DIR/install-proxy.sh" || die "proxy 安装失败"
   ok "proxy 已装并自启"
 fi
@@ -74,3 +90,5 @@ ${G}========================================================${N}
  看到${G} ✅ 链路打通 ${N}后，打开 Codex App（${Y}不要登录 OpenAI${N}）发一句话验证。
 ${G}========================================================${N}
 EOF
+
+# __BITV_INSTALLER_OK__

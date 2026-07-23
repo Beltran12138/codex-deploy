@@ -20,6 +20,19 @@ info(){ printf "  %s\n" "$1"; }
 warn(){ printf "${Y}!${N} %s\n" "$1"; }
 die(){ printf "${R}✗ %s${N}\n" "$1" >&2; exit 1; }
 
+BODY='{"name":"bitv","serviceType":"openai","baseUrl":"http://localhost:8423","apiKeys":["dummy-proxy-injects-real-key"],"modelMapping":{},"supportedModels":["glm4.7"],"normalizeNonstandardChatRoles":true,"reasoningMapping":{},"reasoningParamStyle":"reasoning"}'
+# 数当前 bitv 渠道个数（确定性验证，不看 POST 的形容词返回）
+count_bitv(){
+  curl -s "$BASE/api/responses/channels" -H "Authorization: Bearer $KEY" 2>/dev/null | python3 -c "
+import sys,json
+try: d=json.load(sys.stdin)
+except: print(0); sys.exit(0)
+a = d if isinstance(d,list) else (d.get('channels') or d.get('data') or [])
+print(sum(1 for ch in a if ch.get('name')=='bitv'))
+" 2>/dev/null || echo 0
+}
+post_bitv(){ curl -s -X POST "$BASE/api/responses/channels" -H "Content-Type: application/json" -H "Authorization: Bearer $KEY" -d "$BODY" >/dev/null 2>&1; }
+
 echo "=========================================="
 echo "  建 BitV 渠道（ccx responses 入口，Codex 用）"
 echo "=========================================="
@@ -60,16 +73,18 @@ else
   info "无旧 bitv 渠道"
 fi
 
-# ---- 2. POST 建 BitV 渠道（三关全含）----
+# ---- 2. POST 建 BitV 渠道 + 确定性验证存在（重试，防静默没建成）----
 echo "【2/4】POST 建 BitV 渠道..."
-BODY='{"name":"'"$CHANNEL_NAME"'","serviceType":"openai","baseUrl":"http://localhost:8423","apiKeys":["dummy-proxy-injects-real-key"],"modelMapping":{},"supportedModels":["glm4.7"],"normalizeNonstandardChatRoles":true,"reasoningMapping":{},"reasoningParamStyle":"reasoning"}'
-RES="$(curl -s -X POST "$BASE/api/responses/channels" \
-  -H "Content-Type: application/json" -H "Authorization: Bearer $KEY" -d "$BODY")"
-info "POST 返回：$(printf '%s' "$RES" | head -c 200)"
-echo "$RES" | grep -qiE '添加|added|success|200' && ok "BitV 渠道已建" \
-  || warn "POST 返回异常（可能字段要求不同，把返回贴回）"
+CREATED=0
+for a in 1 2 3; do
+  post_bitv; sleep 1
+  [ "$(count_bitv)" -ge 1 ] && { CREATED=1; break; }
+  warn "第 $a 次 POST 后查不到渠道，重试..."
+done
+[ "$CREATED" = 1 ] && ok "BitV 渠道已建并确认存在（channels 里有 bitv）" \
+  || die "建渠道失败：POST 后 GET 仍查不到 bitv 渠道。手动核：curl -s $BASE/api/responses/channels -H \"Authorization: Bearer \$KEY\""
 
-# ---- 3. 重启 ccx（让新渠道进调度 + 触发探针）----
+# ---- 3. 重启 ccx + 确认渠道存活（重启可能丢内存态渠道 → 再建）----
 echo "【3/4】重启 ccx..."
 launchctl kickstart -k "gui/$(id -u)/com.local.ccx" 2>/dev/null && ok "kickstart 成功" \
   || warn "kickstart 失败，手动：launchctl unload/load ~/Library/LaunchAgents/com.local.ccx.plist"
@@ -80,10 +95,14 @@ for i in $(seq 1 12); do
   sleep 1
 done
 [ "$READY" = 1 ] && ok "ccx 就绪" || warn "ccx 12s 未就绪，查 $CCX_DIR/ccx.log"
+if [ "$(count_bitv)" -lt 1 ]; then
+  warn "重启后渠道丢失，重建一次..."; post_bitv; sleep 2
+fi
+[ "$(count_bitv)" -ge 1 ] && ok "重启后渠道存活确认" || warn "渠道仍缺，下面自测可能 503"
 
 # ---- 4. 自测（模拟 Codex 走 responses 入口）----
 echo "【4/4】自测（Codex 协议：/v1/responses）..."
-TEST="$(curl -s -w '\nHTTP %{http_code}' --max-time 45 "$BASE/v1/responses" \
+TEST="$(curl -s -w '\nHTTP %{http_code}' --max-time 90 "$BASE/v1/responses" \
   -H "Content-Type: application/json" -H "Authorization: Bearer $KEY" \
   -d '{"model":"glm4.7","input":[{"type":"message","role":"user","content":"say hi"}]}')"
 CODE="$(printf '%s' "$TEST" | grep -oE 'HTTP [0-9]+' | tail -1 | awk '{print $2}')"
@@ -97,3 +116,5 @@ else
   info "其他=查 tail -50 $CCX_DIR/ccx.log"
   info "响应：$(printf '%s' "$TEST" | head -c 200)"
 fi
+
+# __FETCH_OK__

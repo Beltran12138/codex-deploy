@@ -97,36 +97,109 @@ if [ -f "$CODEX_DIR/config.toml" ]; then
   cp "$CODEX_DIR/config.toml" "$CODEX_DIR/config.toml.bak.$(date +%Y%m%d%H%M%S)"
   info "已备份原 config.toml"
 fi
-cat > "$CODEX_DIR/config.toml" <<EOF
-model = "$MODEL"
-model_provider = "ccx_local"
-wire_api = "responses"
+# 合并写入（保留 Codex App 自身设置：plugins/mcp_servers/projects 等，只改我们这几个键）
+# base_url 指向 :3001 auth-inject shim（下一步部署），因此 **无 env_key** —— GUI App 免环境变量（实证：GUI 读不到 launchctl env）
+command -v python3 >/dev/null || die "缺 python3（合并配置 + shim 需要；macOS 装 Xcode CLT 即有：xcode-select --install）"
+CODEX_MODEL="$MODEL" python3 - "$CODEX_DIR/config.toml" <<'PYEOF'
+import os, re, sys
+path = sys.argv[1]
+model = os.environ.get("CODEX_MODEL", "glm4.7")
+try:
+    text = open(path, encoding="utf-8").read()
+except FileNotFoundError:
+    text = ""
+lines = text.split("\n")
+hdr = next((i for i, l in enumerate(lines) if l.lstrip().startswith("[")), len(lines))
+def set_top(key, val):
+    global lines, hdr
+    for i in range(hdr):
+        if re.match(r"\s*%s\s*=" % re.escape(key), lines[i]):
+            lines[i] = "%s = %s" % (key, val); return
+    lines.insert(0, "%s = %s" % (key, val)); hdr += 1
+set_top("model", '"%s"' % model)
+set_top("model_provider", '"ccx_local"')
+set_top("wire_api", '"responses"')
+text = "\n".join(lines)
+text = re.sub(r"\n?\[model_providers\.ccx_local\][^\[]*", "\n", text)   # 移除旧 provider 块
+if not text.endswith("\n"): text += "\n"
+text += '\n[model_providers.ccx_local]\nname = "CCX local gateway"\nbase_url = "http://localhost:3001/v1"\n'
+open(path, "w", encoding="utf-8").write(text)
+PYEOF
+ok "Codex 配置已合并（模型 ${MODEL}，指向 shim :3001，保留 App 其他设置）"
 
-[model_providers.ccx_local]
-name = "CCX local gateway"
-base_url = "http://localhost:$CCX_PORT/v1"
-env_key = "CCX_ACCESS_KEY"
-EOF
-ok "Codex 配置写入（模型 ${MODEL}）"
-
-# ---- 4. 注入 CCX_ACCESS_KEY（GUI App 可读 + 开机持久）----
-echo "【4/7】注入本地密码到系统环境（让 Codex App 读到）..."
-launchctl setenv CCX_ACCESS_KEY "$CCX_PWD" || die "launchctl setenv 失败"
-cat > "$ENV_PLIST" <<EOF
+# ---- 4. 部署 auth-inject shim（:3001）----
+# 根因（实证 2026-07-23）：macOS GUI 应用（Codex App）读不到 launchctl setenv 的环境变量，登出重登都不行。
+# 解法：Codex → :3001（无认证）→ 本 shim 运行时从 ccx/.env 读 PROXY_ACCESS_KEY 注入 Bearer → ccx :3000。
+# 因此 config.toml base_url 指 :3001 且无 env_key，GUI App 彻底免环境变量。DeepSeek 与 BitV 两条路共用。
+echo "【4/7】部署 auth-inject shim（:3001，让 Codex App 免环境变量）..."
+PY3="$(command -v python3)"
+SHIM_PY="$CODEX_DIR/auth-inject-proxy.py"
+cat > "$SHIM_PY" <<'PYEOF'
+#!/usr/bin/env python3
+"""auth-inject shim：接收无认证请求，运行时从 ~/tools/ccx/.env 读 PROXY_ACCESS_KEY 注入 Bearer 后转发到 ccx。"""
+import http.server, urllib.request, urllib.error, os, re
+CCX_URL = "http://127.0.0.1:3000"
+LISTEN = ("127.0.0.1", 3001)
+def read_key():
+    try:
+        for line in open(os.path.expanduser("~/tools/ccx/.env"), encoding="utf-8"):
+            m = re.match(r"\s*PROXY_ACCESS_KEY\s*=\s*(.*)", line)
+            if m:
+                return m.group(1).strip()
+    except OSError:
+        pass
+    return ""
+class Proxy(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+    def do_GET(self):
+        self._p("GET")
+    def do_POST(self):
+        self._p("POST")
+    def do_OPTIONS(self):
+        self.send_response(200); self.end_headers()
+    def _p(self, method):
+        n = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(n) if n > 0 else b""
+        req = urllib.request.Request(CCX_URL + self.path, data=body, method=method)
+        req.add_header("Authorization", "Bearer " + read_key())
+        req.add_header("Content-Type", self.headers.get("Content-Type", "application/json"))
+        try:
+            r = urllib.request.urlopen(req, timeout=180)
+            self.send_response(r.status)
+            for k, v in r.getheaders():
+                if k.lower() not in ("transfer-encoding", "connection"):
+                    self.send_header(k, v)
+            self.end_headers(); self.wfile.write(r.read())
+        except urllib.error.HTTPError as e:
+            self.send_response(e.code); self.end_headers(); self.wfile.write(e.read())
+        except Exception as e:
+            self.send_response(502); self.end_headers(); self.wfile.write(str(e).encode())
+if __name__ == "__main__":
+    print("auth-inject on :%d -> %s" % (LISTEN[1], CCX_URL))
+    http.server.HTTPServer(LISTEN, Proxy).serve_forever()
+PYEOF
+SHIM_PLIST="$LA_DIR/com.local.ccx-auth-inject.plist"
+cat > "$SHIM_PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>Label</key><string>com.local.ccx-env</string>
+  <key>Label</key><string>com.local.ccx-auth-inject</string>
   <key>ProgramArguments</key>
-  <array>
-    <string>sh</string><string>-c</string><string>launchctl setenv CCX_ACCESS_KEY $CCX_PWD</string>
-  </array>
+  <array><string>$PY3</string><string>$SHIM_PY</string></array>
+  <key>WorkingDirectory</key><string>$CODEX_DIR</string>
   <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>$CODEX_DIR/auth-inject.log</string>
+  <key>StandardErrorPath</key><string>$CODEX_DIR/auth-inject.log</string>
 </dict></plist>
 EOF
+# 清理旧的环境变量方案（不再用）
 launchctl unload "$ENV_PLIST" 2>/dev/null || true
-launchctl load "$ENV_PLIST" 2>/dev/null || true
-ok "已注入 + 开机自动（重启后 Codex 仍能用）"
+rm -f "$ENV_PLIST"
+launchctl unload "$SHIM_PLIST" 2>/dev/null || true
+launchctl load "$SHIM_PLIST" || die "shim launchd 加载失败"
+ok "auth-inject shim 已部署并自启（:3001）"
 
 # ---- 5. ccx 开机自启 + 立即启动 ----
 echo "【5/7】配置 ccx 开机自启..."
@@ -157,6 +230,14 @@ for i in $(seq 1 15); do
 done
 [ "$READY" = 1 ] && ok "ccx 就绪（http://localhost:${CCX_PORT}）" || warn "ccx 15s 未响应，查日志：$CCX_LOG"
 
+# shim 就绪（:3001/health → 经 shim 打到 ccx /health）
+SHIM_READY=0
+for i in $(seq 1 10); do
+  if curl -fsS -m 3 "http://localhost:3001/health" >/dev/null 2>&1; then SHIM_READY=1; break; fi
+  sleep 1
+done
+[ "$SHIM_READY" = 1 ] && ok "auth-inject shim 就绪（:3001）" || warn "shim 10s 未响应，查日志：$CODEX_DIR/auth-inject.log"
+
 # ---- 7. 唯一手动步：网页配 DeepSeek 渠道 ----
 echo "【7/7】最后一步（手动，~30 秒）：在 ccx 网页接入 DeepSeek"
 cat <<EOF
@@ -180,3 +261,5 @@ ${G}========================================================${N}
 
 完成。以后开机自动可用。日志：${CCX_LOG}
 EOF
+
+# __FETCH_OK__
