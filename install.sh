@@ -68,7 +68,7 @@ else
   cp "$SRC" "$CCX_DIR/ccx.tmp"
 fi
 ACT="$(shasum -a 256 "$CCX_DIR/ccx.tmp" | awk '{print $1}')"
-[ "$EXP" = "$ACT" ] || die "sha256 校验失败！期望 $EXP 实得 $ACT（文件损坏/版本不符），已中止"
+[ "$EXP" = "$ACT" ] || die "sha256 校验失败！期望 $EXP 实得 ${ACT}（文件损坏/版本不符），已中止"
 mv "$CCX_DIR/ccx.tmp" "$CCX_DIR/ccx"
 chmod +x "$CCX_DIR/ccx"
 xattr -d com.apple.quarantine "$CCX_DIR/ccx" 2>/dev/null || true

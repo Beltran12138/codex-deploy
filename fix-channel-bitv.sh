@@ -39,7 +39,7 @@ echo "=========================================="
 
 command -v curl >/dev/null || die "缺 curl"
 command -v python3 >/dev/null || die "缺 python3"
-[ -f "$ENV_FILE" ] || die "找不到 $ENV_FILE，先跑 install-bitv.sh"
+[ -f "$ENV_FILE" ] || die "找不到 ${ENV_FILE}，先跑 install-bitv.sh"
 
 # ccx 本地密码（变量引用，全程不打印）
 KEY="$(grep '^PROXY_ACCESS_KEY=' "$ENV_FILE" | cut -d= -f2-)"
@@ -50,7 +50,7 @@ echo "【0/4】检查依赖..."
 curl -fsS -m 3 "http://localhost:8423/v1/models" >/dev/null 2>&1 \
   || die "proxy :8423 没跑。先装：bash chat-path-rewrite-proxy/install-proxy.sh"
 ok "proxy 在线"
-curl -fsS "$BASE/health" >/dev/null 2>&1 || die "ccx 没响应 $BASE，先跑 install-bitv.sh"
+curl -fsS "$BASE/health" >/dev/null 2>&1 || die "ccx 没响应 ${BASE}，先跑 install-bitv.sh"
 ok "ccx 在线"
 
 # ---- 1. 删除已有同名 bitv 渠道（幂等：避免重复）----
